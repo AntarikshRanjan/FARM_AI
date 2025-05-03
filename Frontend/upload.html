@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Upload or Analyze Plant</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    video, canvas {
+      border-radius: 12px;
+      margin-top: 1em;
+      max-width: 100%;
+      box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
+    }
+
+    .segment {
+      background: #f0fff4;
+      border: 2px solid #c8e6c9;
+      border-radius: 16px;
+      padding: 1.5em;
+      margin: 2em 0;
+      box-shadow: 0 6px 18px rgba(0, 128, 0, 0.1);
+    }
+
+    .segment h2 {
+      margin-bottom: 1em;
+      color: #2e7d32;
+    }
+
+    .status {
+      font-style: italic;
+      margin-top: 1em;
+      color: #4e342e;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <h1 class="highlight">🌱 Upload or Analyze Plant Disease</h1>
+
+    <!-- Segment 1: Manual Upload -->
+    <div class="segment">
+      <h2>📁 Upload Image Manually</h2>
+      <form action="remedies.html" method="post" enctype="multipart/form-data">
+        <input type="file" name="plantImage" accept="image/*" required />
+        <input type="submit" value="Upload & Analyze" />
+      </form>
+    </div>
+
+    <!-- Segment 2: Real-Time Analysis -->
+    <div class="segment">
+      <h2>📷 Real-Time Camera Analysis</h2>
+      <video id="video" autoplay playsinline></video>
+      <canvas id="canvas" style="display:none;"></canvas>
+      <p class="status" id="status">Camera is initializing...</p>
+      <button onclick="startRealtimeCapture()">Start Real-Time Analysis</button>
+      <button onclick="stopRealtimeCapture()" style="background-color: #d32f2f;">Stop</button>
+    </div>
+
+    <button class="back-button" onclick="location.href='index.html'">⬅ Back to Home</button>
+  </div>
+
+  <script>
+    let video = document.getElementById('video');
+    let canvas = document.getElementById('canvas');
+    let statusText = document.getElementById('status');
+    let intervalId = null;
+
+    // Access Camera
+    navigator.mediaDevices.getUserMedia({ video: true })
+      .then(stream => {
+        video.srcObject = stream;
+        statusText.textContent = "Camera ready. You can start real-time analysis.";
+      })
+      .catch(err => {
+        statusText.textContent = "Camera access failed: " + err.message;
+      });
+
+    function startRealtimeCapture() {
+      if (intervalId) return;
+
+      statusText.textContent = "Analyzing every 2 seconds...";
+
+      intervalId = setInterval(() => {
+        const context = canvas.getContext('2d');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+        const imageData = canvas.toDataURL('image/jpeg');
+
+        // 👉 Simulate backend call
+        console.log("Sending image for analysis:", imageData.substring(0, 100), "...");
+
+        // TODO: send `imageData` to backend and get disease info & remedies
+      }, 2000);
+    }
+
+    function stopRealtimeCapture() {
+      clearInterval(intervalId);
+      intervalId = null;
+      statusText.textContent = "Real-time analysis stopped.";
+    }
+  </script>
+</body>
+</html>

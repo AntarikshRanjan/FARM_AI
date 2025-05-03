@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Manual Disease Entry</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="page">
+    <h1 class="highlight">🌿 Enter Disease Details</h1>
+    <form action="remedies.html" method="get" class="disease-form">
+      <div class="form-group">
+        <label for="crop">Crop Type:</label>
+        <select id="crop" name="crop" required>
+          <option value="">-- Select Crop --</option>
+          <option value="Tomato">Wheat</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="disease">Disease Name:</label>
+        <input type="text" id="disease" name="disease" placeholder="e.g. Leaf Rust" required />
+      </div>
+
+      <div class="form-group">
+        <label for="symptoms">Symptoms:</label>
+        <textarea id="symptoms" name="symptoms" rows="4" placeholder="Describe the symptoms..." required></textarea>
+      </div>
+
+      <div class="form-group">
+        <label for="affectedPart">Affected Plant Part:</label>
+        <input type="text" id="affectedPart" name="affectedPart" placeholder="e.g. Leaves, Stem" required />
+      </div>
+
+      <div class="form-group">
+        <label for="severity">Severity Level:</label>
+        <select id="severity" name="severity" required>
+          <option value="">-- Select Severity --</option>
+          <option value="low">Low</option>
+          <option value="moderate">Moderate</option>
+          <option value="high">High</option>
+        </select>
+      </div>
+
+      <button type="submit">Get Remedies</button>
+    </form>
+
+    <button class="back-button" onclick="location.href='index.html'">⬅ Back to Home</button>
+  </div>
+</body>
+</html>
