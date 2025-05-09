@@ -1,0 +1,187 @@
+#include <ESP8266WiFi.h>
+#include <DHT.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <ArduinoJson.h>
+
+// ========== CONFIGURATION ========== //
+// WiFi Credentials
+const char* WIFI_SSID = "YOUR_SSID";
+const char* WIFI_PASSWORD = "YOUR_PASSWORD";
+
+// Server Configuration (Use HTTPS if possible)
+const char* SERVER_URL = "http://YOUR_SERVER_IP:5000/data";
+const int SERVER_PORT = 5000;
+
+// Sensor Pins
+#define DHTPIN D4
+#define DHTTYPE DHT22
+#define SOIL_MOISTURE_PIN A0
+
+// Timing & Retry Settings
+const unsigned long POST_INTERVAL = 10000;  // 10 seconds
+const unsigned long WIFI_RETRY_DELAY = 5000;  // 5 seconds
+const int MAX_HTTP_RETRIES = 3;
+
+// ========== GLOBALS ========== //
+DHT dht(DHTPIN, DHTTYPE);
+unsigned long lastPostTime = 0;
+unsigned long lastWifiAttempt = 0;
+bool wifiConnected = false;
+
+// ========== SETUP ========== //
+void setup() {
+  Serial.begin(115200);
+  delay(1000);  // Allow serial monitor to initialize
+  
+  Serial.println("\n===== IoT Sensor Node Starting =====");
+  
+  // Initialize sensor
+  dht.begin();
+  pinMode(SOIL_MOISTURE_PIN, INPUT);
+  
+  // Initialize WiFi
+  initWiFi();
+}
+
+// ========== MAIN LOOP ========== //
+void loop() {
+  // Maintain WiFi connection
+  if (WiFi.status() != WL_CONNECTED) {
+    if (millis() - lastWifiAttempt >= WIFI_RETRY_DELAY) {
+      Serial.println("[WiFi] Connection lost. Reconnecting...");
+      initWiFi();
+      lastWifiAttempt = millis();
+    }
+    return; // Skip rest of loop if WiFi is down
+  }
+
+  // Read sensors
+  SensorData data = readSensors();
+  
+  // Post data at intervals (non-blocking)
+  if (millis() - lastPostTime >= POST_INTERVAL) {
+    bool success = sendSensorData(data);
+    if (success) {
+      lastPostTime = millis();
+    } else {
+      Serial.println("[HTTP] Failed to send data. Will retry next cycle.");
+    }
+  }
+
+  delay(100);  // Small delay to stabilize loop
+}
+
+// ========== CORE FUNCTIONS ========== //
+
+// Struct to hold sensor data
+struct SensorData {
+  float temperature;
+  float humidity;
+  int soilMoisture;
+};
+
+// Initialize WiFi connection
+void initWiFi() {
+  Serial.print("\n[WiFi] Connecting to: ");
+  Serial.println(WIFI_SSID);
+  
+  WiFi.disconnect(true);  // Clear previous config
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 15) {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+  }
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    wifiConnected = true;
+    Serial.println("\n[WiFi] Connected!");
+    Serial.print("[WiFi] IP Address: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    wifiConnected = false;
+    Serial.println("\n[WiFi] Connection failed!");
+  }
+}
+
+// Read all sensors and return structured data
+SensorData readSensors() {
+  SensorData data;
+  
+  // Read DHT sensor
+  data.temperature = dht.readTemperature();
+  data.humidity = dht.readHumidity();
+  
+  // Validate DHT readings
+  if (isnan(data.temperature) || isnan(data.humidity)) {
+    Serial.println("[SENSOR] ERROR: Failed to read DHT sensor!");
+    data.temperature = -1.0;  // Error values
+    data.humidity = -1.0;
+  }
+  
+  // Read soil moisture (0-1023)
+  data.soilMoisture = analogRead(SOIL_MOISTURE_PIN);
+  
+  // Debug output
+  Serial.println("\n[SENSOR] Readings:");
+  Serial.print("  Temperature: "); Serial.print(data.temperature); Serial.println(" °C");
+  Serial.print("  Humidity: "); Serial.print(data.humidity); Serial.println(" %");
+  Serial.print("  Soil Moisture: "); Serial.println(data.soilMoisture);
+  
+  return data;
+}
+
+// Send data to server with retry logic
+bool sendSensorData(const SensorData& data) {
+  WiFiClient client;
+  HTTPClient http;
+  
+  // Create JSON payload
+  DynamicJsonDocument doc(256);
+  doc["temperature"] = data.temperature;
+  doc["humidity"] = data.humidity;
+  doc["soil_moisture"] = data.soilMoisture;
+  
+  String payload;
+  serializeJson(doc, payload);
+  
+  Serial.println("\n[HTTP] Attempting to send data:");
+  Serial.println(payload);
+
+  // Retry logic
+  for (int attempt = 1; attempt <= MAX_HTTP_RETRIES; attempt++) {
+    if (http.begin(client, SERVER_URL)) {
+      http.addHeader("Content-Type", "application/json");
+      
+      int httpCode = http.POST(payload);
+      
+      if (httpCode > 0) {
+        Serial.printf("[HTTP] Response code: %d (Attempt %d/%d)\n", 
+                     httpCode, attempt, MAX_HTTP_RETRIES);
+        
+        if (httpCode == HTTP_CODE_OK) {
+          String response = http.getString();
+          Serial.println("[HTTP] Server response: " + response);
+          http.end();
+          return true;
+        }
+      } else {
+        Serial.printf("[HTTP] POST failed, error: %s\n", 
+                     http.errorToString(httpCode).c_str());
+      }
+      
+      http.end();
+    } else {
+      Serial.println("[HTTP] Failed to connect to server");
+    }
+    
+    if (attempt < MAX_HTTP_RETRIES) {
+      delay(2000);  // Wait before retrying
+    }
+  }
+  
+  return false;  // All attempts failed
+}
