@@ -1,0 +1,225 @@
+#include <ESP8266WiFi.h>
+#include <DHT.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <ArduinoJson.h>
+#include <ESP8266WebServer.h>
+
+// ========== CONFIGURATION ========== //
+// WiFi Credentials
+const char* WIFI_SSID = "rss";
+const char* WIFI_PASSWORD = "papabol1234";
+
+// Server Configuration
+const char* SERVER_URL = "";  // Empty to disable POSTing data
+const int SERVER_PORT = 8501;
+
+// Sensor Pins
+#define DHTPIN D4
+#define DHTTYPE DHT22
+#define SOIL_MOISTURE_PIN A0
+
+// Web Server Port
+const int WEB_SERVER_PORT = 80;
+
+// Timing & Retry Settings
+const unsigned long POST_INTERVAL = 10000;  // 10 seconds
+const unsigned long WIFI_RETRY_DELAY = 5000;  // 5 seconds
+const int MAX_HTTP_RETRIES = 3;
+const unsigned long SENSOR_READ_INTERVAL = 2000;  // DHT22 needs 2s between reads
+
+// ========== GLOBALS ========== //
+DHT dht(DHTPIN, DHTTYPE, 22);  // 22 is the ESP8266-specific timing parameter
+ESP8266WebServer webServer(WEB_SERVER_PORT);
+unsigned long lastPostTime = 0;
+unsigned long lastWifiAttempt = 0;
+unsigned long lastSensorReadTime = 0;
+bool wifiConnected = false;
+
+// Struct to hold sensor data
+struct SensorData {
+  float temperature;
+  float humidity;
+  int soilMoisture;
+  unsigned long timestamp;
+};
+
+// Current sensor data
+SensorData currentData;
+
+// ========== FUNCTION DECLARATIONS ========== //
+void initWiFi();
+void setupWebServer();
+void handleRoot();
+void handleData();
+void handleSensorAPI();
+void handleNotFound();
+SensorData readSensors();
+bool readDHTData(float &temp, float &hum);
+
+// ========== SETUP ========== //
+void setup() {
+  Serial.begin(115200);
+  delay(1000);  // Allow serial monitor to initialize
+  
+  Serial.println("\n===== IoT Sensor Node Starting =====");
+  
+  // Initialize sensor with proper timing
+  dht.begin();
+  pinMode(SOIL_MOISTURE_PIN, INPUT);
+  
+  // Initialize WiFi
+  initWiFi();
+
+  // Setup web server routes
+  setupWebServer();
+}
+
+// ========== MAIN LOOP ========== //
+void loop() {
+  // Maintain WiFi connection
+  if (WiFi.status() != WL_CONNECTED) {
+    if (millis() - lastWifiAttempt >= WIFI_RETRY_DELAY) {
+      Serial.println("[WiFi] Connection lost. Reconnecting...");
+      initWiFi();
+      lastWifiAttempt = millis();
+    }
+    return; // Skip rest of loop if WiFi is down
+  }
+  
+  // Handle web client requests
+  webServer.handleClient();
+
+  // Read sensors at proper intervals (DHT22 needs 2s between reads)
+  if (millis() - lastSensorReadTime >= SENSOR_READ_INTERVAL) {
+    currentData = readSensors();
+    currentData.timestamp = millis();
+    lastSensorReadTime = millis();
+    
+    // Debug output
+    Serial.print("Temperature: "); Serial.print(currentData.temperature); Serial.println(" °C");
+    Serial.print("Humidity: "); Serial.print(currentData.humidity); Serial.println(" %");
+    Serial.print("Soil Moisture: "); Serial.println(currentData.soilMoisture);
+  }
+  
+  // Post data at intervals (disabled in this example)
+  if (millis() - lastPostTime >= POST_INTERVAL) {
+    lastPostTime = millis();
+  }
+
+  delay(10);  // Small delay to stabilize loop
+}
+
+// ========== WEB SERVER FUNCTIONS ========== //
+void setupWebServer() {
+  webServer.on("/", handleRoot);
+  webServer.on("/data", handleData);
+  webServer.on("/api/sensors", HTTP_GET, handleSensorAPI);
+  webServer.enableCORS(true);
+  webServer.onNotFound(handleNotFound);
+  
+  webServer.begin();
+  Serial.print("[Web] Server started on port ");
+  Serial.println(WEB_SERVER_PORT);
+}
+
+void handleRoot() {
+  String html = "<!DOCTYPE html><html><head><title>Sensor Dashboard</title></head><body>"
+                "<h1>Sensor Data</h1>"
+                "<p>Temperature: " + String(currentData.temperature) + " °C</p>"
+                "<p>Humidity: " + String(currentData.humidity) + " %</p>"
+                "<p>Soil Moisture: " + String(currentData.soilMoisture) + "</p>"
+                "<p><a href='/api/sensors'>JSON API</a></p>"
+                "</body></html>";
+  webServer.send(200, "text/html", html);
+}
+
+void handleData() {
+  handleRoot(); // Reuse the same HTML for simplicity
+}
+
+void handleSensorAPI() {
+  StaticJsonDocument<256> doc;
+  doc["temperature"] = currentData.temperature;
+  doc["humidity"] = currentData.humidity;
+  doc["soil_moisture"] = currentData.soilMoisture;
+  doc["timestamp"] = currentData.timestamp;
+  
+  String jsonResponse;
+  serializeJson(doc, jsonResponse);
+  
+  webServer.sendHeader("Cache-Control", "no-cache");
+  webServer.send(200, "application/json", jsonResponse);
+}
+
+void handleNotFound() {
+  webServer.send(404, "text/plain", "Not Found");
+}
+
+// ========== SENSOR FUNCTIONS ========== //
+bool readDHTData(float &temp, float &hum) {
+  temp = dht.readTemperature();
+  hum = dht.readHumidity();
+  
+  if (isnan(temp) || isnan(hum)) {
+    Serial.println("Failed to read DHT sensor!");
+    return false;
+  }
+  return true;
+}
+
+SensorData readSensors() {
+  SensorData data;
+  int attempts = 0;
+  const int maxAttempts = 5;
+  
+  // Read DHT with retries
+  while (attempts < maxAttempts) {
+    if (readDHTData(data.temperature, data.humidity)) {
+      break;
+    }
+    attempts++;
+    delay(250);
+  }
+  
+  // Fallback values if reading fails
+  if (attempts >= maxAttempts) {
+    Serial.println("Using fallback values for DHT");
+    data.temperature = 25.0;
+    data.humidity = 50.0;
+  }
+  
+  // Read soil moisture
+  data.soilMoisture = analogRead(SOIL_MOISTURE_PIN);
+  
+  return data;
+}
+
+// ========== WIFI FUNCTIONS ========== //
+void initWiFi() {
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+  delay(100);
+  
+  Serial.print("Connecting to ");
+  Serial.println(WIFI_SSID);
+  
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 15) {
+    delay(500);
+    Serial.print(".");
+    attempts++;
+  }
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    wifiConnected = true;
+    Serial.println("\n[WiFi] Connected!");
+    Serial.print("[WiFi] IP Address: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    wifiConnected = false;
+    Serial.println("\n[WiFi] Connection failed!");
+  }
+}
