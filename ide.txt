@@ -1,0 +1,100 @@
+#include <ESP8266WiFi.h>
+#include <DHT.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <ArduinoJson.h>  // For structured JSON handling (optional)
+
+// Sensor Config
+#define DHTPIN D4
+#define DHTTYPE DHT22
+DHT dht(DHTPIN, DHTTYPE);
+
+// WiFi Credentials
+const char* ssid = "YOUR_SSID";
+const char* password = "YOUR_PASSWORD";
+
+// Server Config (Use HTTPS if possible)
+const char* server = "http://YOUR_SERVER_IP:5000/data"; 
+const int serverPort = 5000;
+
+// Timing
+const unsigned long postInterval = 10000;  // 10 seconds
+unsigned long lastPostTime = 0;
+
+void setup() {
+  Serial.begin(115200);
+  dht.begin();
+  
+  // Initialize WiFi
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nConnected! IP: " + WiFi.localIP());
+}
+
+void loop() {
+  // Read sensors
+  float temp = dht.readTemperature();
+  float hum = dht.readHumidity();
+  int soil = analogRead(A0);  // Soil moisture (0-1023)
+
+  // Validate sensor readings
+  if (isnan(temp) || isnan(hum)) {
+    Serial.println("ERROR: Failed to read DHT sensor!");
+    delay(1000);
+    return;
+  }
+
+  // Post data at intervals (non-blocking)
+  if (millis() - lastPostTime >= postInterval) {
+    if (WiFi.status() == WL_CONNECTED) {
+      sendSensorData(temp, hum, soil);
+    } else {
+      Serial.println("WiFi disconnected! Attempting reconnect...");
+      WiFi.reconnect();
+    }
+    lastPostTime = millis();
+  }
+
+  delay(100);  // Small delay to stabilize loop
+}
+
+// Function to send data to server
+void sendSensorData(float temp, float hum, int soil) {
+  WiFiClient client;
+  HTTPClient http;
+
+  // Start HTTP connection
+  if (http.begin(client, server)) {
+    http.addHeader("Content-Type", "application/json");
+
+    // Create JSON payload (using ArduinoJson for reliability)
+    DynamicJsonDocument doc(1024);
+    doc["temperature"] = temp;
+    doc["humidity"] = hum;
+    doc["soil_moisture"] = soil;
+    String payload;
+    serializeJson(doc, payload);
+
+    // Send POST request
+    int httpCode = http.POST(payload);
+
+    // Check response
+    if (httpCode > 0) {
+      Serial.printf("POST sent! Code: %d\n", httpCode);
+      if (httpCode == HTTP_CODE_OK) {
+        String response = http.getString();
+        Serial.println("Server response: " + response);
+      }
+    } else {
+      Serial.printf("POST failed, error: %s\n", http.errorToString(httpCode).c_str());
+    }
+
+    http.end();
+  } else {
+    Serial.println("Failed to connect to server");
+  }
+}
